@@ -39,7 +39,6 @@ def main(args):
         train=False,
         image_size=args.image_size,
     )
-    valid_ds = [valid_ds[i] for i in range(args.num_samples)]
     valid_dl = torch.utils.data.DataLoader(
         valid_ds,
         batch_size=1,
@@ -80,7 +79,7 @@ def main(args):
                     k: v if k == 'light' else v * mask
                     for k, v in output.items()
                 }
-        dirpath = os.path.join(args.dir_samples, str(engine.state.iteration))
+        dirpath = os.path.join(args.dir_samples, str(engine.state.epoch))
         os.makedirs(dirpath, exist_ok=True)
         for name in 'face albedo'.split():
             tvutils.save_image(target[name],
@@ -97,7 +96,7 @@ def main(args):
 
     evaluator = Engine(valid_step)
 
-    evaluator.run(valid_dl)
+    evaluator.run(valid_dl, args.num_samples, 1)
 
 
 if __name__ == '__main__':
