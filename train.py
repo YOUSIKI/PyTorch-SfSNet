@@ -79,7 +79,7 @@ def main(args):
     net = models.SfSNet()
 
     if args.pretrained:
-        net.load_state_dict(torch.load(args.pretrained))
+        net.load_state_dict(torch.load(args.pretrained, map_location='cpu'))
 
     net = net.to(device)
 
