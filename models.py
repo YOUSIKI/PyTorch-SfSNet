@@ -22,9 +22,12 @@ class SfSNet(nn.Module):
         normal_features = self.normal_features(features)
         albedo = self.albedo_generator(albedo_features)
         normal = self.normal_generator(normal_features)
-        features = torch.cat([features, albedo_features, normal_features],
-                             dim=1)
-        light = self.light_estimator(features)
+        light = self.light_estimator(
+            torch.cat([
+                features,
+                albedo_features,
+                normal_features,
+            ], dim=1))
         shading = get_shading(normal, light)
         face = shading * albedo
         return {
@@ -40,7 +43,7 @@ class SfSNet(nn.Module):
         return nn.Sequential(
             Conv2d(3, 64, kernel_size=7, norm='bn', act='relu'),
             Conv2d(64, 128, kernel_size=3, norm='bn', act='relu'),
-            Conv2d(128, 128, kernel_size=3, stride=2, norm='bn', act='relu'),
+            Conv2d(128, 128, kernel_size=3, stride=2),
         )
 
     @staticmethod
@@ -48,8 +51,12 @@ class SfSNet(nn.Module):
         return nn.Sequential(
             *[
                 Residual(
-                    Conv2d(128, 128, kernel_size=3, norm='bn', act='relu'),
-                    Conv2d(128, 128, kernel_size=3, norm='bn', act='relu'),
+                    nn.BatchNorm2d(128),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(128),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
                 ) for i in range(n_blocks)
             ],
             nn.BatchNorm2d(128),
@@ -62,7 +69,7 @@ class SfSNet(nn.Module):
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             Conv2d(128, 128, kernel_size=1, norm='bn', act='relu'),
             Conv2d(128, 64, kernel_size=3, norm='bn', act='relu'),
-            Conv2d(64, 3, kernel_size=1, norm='bn'),
+            Conv2d(64, 3, kernel_size=1),
         )
 
     @staticmethod
@@ -78,8 +85,6 @@ class SfSNet(nn.Module):
 @torch.jit.script
 def get_shading(N, L):
     device = N.device
-    N = N.to(device)
-    L = L.to(device)
     c1 = 0.8862269254527579
     c2 = 1.0233267079464883
     c3 = 0.24770795610037571
@@ -102,8 +107,8 @@ def get_shading(N, L):
     shading = torch.zeros((b, c, h, w), device=device)
     for j, l in enumerate(sh):
         l = l.repeat(1, h * w).view(b, h, w, 9).permute([0, 3, 1, 2])
-        # Generate shading
-        shading[:, j, :, :] = Y1 * l[:, 0] + Y2 * l[:, 1] + Y3 * l[:, 2] + \
-                            Y4 * l[:, 3] + Y5 * l[:, 4] + Y6 * l[:, 5] + \
-                            Y7 * l[:, 6] + Y8 * l[:, 7] + Y9 * l[:, 8]
+        shading[:, j, ...] = \
+            Y1 * l[:, 0] + Y2 * l[:, 1] + Y3 * l[:, 2] + \
+            Y4 * l[:, 3] + Y5 * l[:, 4] + Y6 * l[:, 5] + \
+            Y7 * l[:, 6] + Y8 * l[:, 7] + Y9 * l[:, 8]
     return shading

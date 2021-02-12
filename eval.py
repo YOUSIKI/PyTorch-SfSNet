@@ -87,6 +87,8 @@ def main(args):
             tvutils.save_image(output[name],
                                os.path.join(dirpath, f'{name}_output.png'))
         # normal
+        print(target['normal'].max(), target['normal'].min())
+        print(output['normal'].max(), output['normal'].min())
         tvutils.save_image((target['normal'] + 1.0) * 128.0,
                            os.path.join(dirpath, f'normal_target.png'))
         tvutils.save_image((output['normal'] + 1.0) * 128.0,
