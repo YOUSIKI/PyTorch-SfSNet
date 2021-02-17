@@ -12,43 +12,31 @@ from torchvision.transforms import functional
 __all__ = ['DatasetX', 'FolderDataset']
 
 
-def png_loader(filename, size=128, default=None):
-    if os.path.exists(filename):
-        img = Image.open(filename)
-        img = functional.resize(img, size, Image.BILINEAR)
-        img = functional.center_crop(img, (size, size))
-        img = functional.to_tensor(img)
-        return img
-    else:
-        return default
+def png_loader(filename, size=128):
+    img = Image.open(filename)
+    img = functional.resize(img, size, Image.BILINEAR)
+    img = functional.center_crop(img, (size, size))
+    img = functional.to_tensor(img)
+    return img
 
 
-def png_saver(filename, img):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    img = functional.to_pil_image(img)
-    img.save(filename)
-
-
-def txt_loader(filename, default=None):
-    if os.path.exists(filename):
-        data = np.loadtxt(filename)
-        data = FloatTensor(data)
-        return data
-    else:
-        return default
-
-
-def txt_saver(filename, data):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    data = data.detach().cpu().numpy()
-    np.savetxt(filename, data)
+def txt_loader(filename):
+    data = np.loadtxt(filename)
+    data = FloatTensor(data)
+    return data
 
 
 class FolderDataset(Dataset):
-    def __init__(self, root, split='train'):
+    def __init__(self,
+                 root,
+                 split='train',
+                 device=torch.device('cpu'),
+                 teacher=None):
         super().__init__()
         self.root = root
         self.split = split
+        self.device = device
+        self.teacher = teacher
         samples = len(glob.glob(os.path.join(self.root, 'face', '*.png')))
         if self.split == 'all':
             self.samples = range(samples)
@@ -63,15 +51,28 @@ class FolderDataset(Dataset):
     def __getitem__(self, index):
         index = self.samples[index]
         template = os.path.join(self.root, '%s', '%08d.%s')
-        face = png_loader(template % ('face', index, 'png'))
-        mask = png_loader(template % ('mask', index, 'png'),
-                          default=torch.ones_like(face))
-        light = txt_loader(template % ('light', index, 'txt'),
-                           default=torch.zeros((27, ), dtype=torch.float))
-        albedo = png_loader(template % ('albedo', index, 'png'),
-                            default=torch.zeros_like(face))
-        normal = png_loader(template % ('normal', index, 'png'),
-                            default=torch.zeros_like(face))
+        face = png_loader(template % ('face', index, 'png')).to(self.device)
+        if self.teacher is None:
+            mask = png_loader(template % ('mask', index, 'png'))
+            light = txt_loader(template % ('light', index, 'txt'))
+            albedo = png_loader(template % ('albedo', index, 'png'))
+            normal = png_loader(template % ('normal', index, 'png'))
+        else:
+            mask = torch.ones_like(face)
+            with torch.no_grad():
+                self.teacher = self.teacher.to(self.device)
+                self.teacher.eval()
+                outputs = self.teacher({'face': face.view((1, *face.size()))})
+                light = outputs['light'].detach()
+                albedo = outputs['albedo'].detach()
+                normal = outputs['normal'].detach()
+                light = light.view(light.size()[1:])
+                albedo = albedo.view(albedo.size()[1:])
+                normal = normal.view(normal.size()[1:])
+        mask = mask.to(self.device)
+        light = light.to(self.device)
+        albedo = albedo.to(self.device)
+        normal = normal.to(self.device)
         return {
             'face': face,
             'mask': mask,
@@ -79,16 +80,6 @@ class FolderDataset(Dataset):
             'albedo': albedo,
             'normal': normal,
         }
-
-    def __setitem__(self, index, value):
-        index = self.samples[index]
-        template = os.path.join(self.root, '%s', '%08d.%s')
-        for name, item in value.items():
-            assert name != 'face'
-            if name == 'light':
-                txt_saver(template % (name, index, 'txt'), item)
-            else:
-                png_saver(template % (name, index, 'png'), item)
 
 
 class DatasetX(Dataset):

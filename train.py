@@ -105,6 +105,12 @@ def parse_arguments():
                         default=None,
                         action='store',
                         help='load pretrained weight')
+    # teacher model
+    parser.add_argument('--teacher',
+                        type=str,
+                        default=None,
+                        action='store',
+                        help='load teacher model weight')
     # apply mask on images
     parser.add_argument('--apply_mask',
                         action='store_true',
@@ -135,12 +141,34 @@ def main(args):
     valid_ds = data.DatasetX()
     if args.dataset_synthetic:
         train_ds.append(
-            data.FolderDataset(args.dataset_synthetic, split='train'))
+            data.FolderDataset(
+                args.dataset_synthetic,
+                split='train',
+                device=device,
+            ))
         valid_ds.append(
-            data.FolderDataset(args.dataset_synthetic, split='valid'))
+            data.FolderDataset(
+                args.dataset_synthetic,
+                split='valid',
+                device=device,
+            ))
     if args.dataset_celeba:
-        train_ds.append(data.FolderDataset(args.dataset_celeba, split='train'))
-        valid_ds.append(data.FolderDataset(args.dataset_celeba, split='valid'))
+        teacher = models.SfSNet().to(device)
+        teacher.load_state_dict(torch.load(args.teacher, map_location=device))
+        train_ds.append(
+            data.FolderDataset(
+                args.dataset_celeba,
+                split='train',
+                device=device,
+                teacher=teacher,
+            ))
+        valid_ds.append(
+            data.FolderDataset(
+                args.dataset_celeba,
+                split='valid',
+                device=device,
+                teacher=teacher,
+            ))
 
     # setup dataloader
     train_dl = data.DataLoaderX(
@@ -148,14 +176,14 @@ def main(args):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         shuffle=True,
-        pin_memory=True,
+        # pin_memory=True,
     )
     valid_dl = data.DataLoaderX(
         dataset=valid_ds,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         shuffle=False,
-        pin_memory=True,
+        # pin_memory=True,
     )
 
     # setup model
@@ -189,39 +217,45 @@ def main(args):
             else:
                 net.eval()
 
-            # move inputs to device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-
-            # apply mask on images
-            def mask(x):
-                if args.apply_mask:
-                    return x * inputs['mask']
-                else:
-                    return x
-
-            outputs = net(inputs)
-
-            # calculate losses
-            losses = {
-                k: v(mask(outputs[k]), mask(inputs[k]))
-                if k in 'albedo normal'.split() else v(outputs[k], inputs[k])
-                for k, v in criterion.items()
-            }
-
-            # backward and optimization
             if is_train:
-                optimizer.zero_grad()
-                sum(losses.values()).backward()
-                optimizer.step()
+                grad_context = torch.enable_grad
+            else:
+                grad_context = torch.no_grad
 
-            # generate fake results
-            fakes = net(inputs, fake_forward=True)
+            with grad_context():
+                # move inputs to device
+                inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            # tag dicts and return
-            fakes = {f'{k}_fake': v for k, v in fakes.items()}
-            losses = {f'{k}_loss': v for k, v in losses.items()}
-            inputs = {f'{k}_input': v for k, v in inputs.items()}
-            outputs = {f'{k}_output': v for k, v in outputs.items()}
+                # apply mask on images
+                def mask(x):
+                    if args.apply_mask:
+                        return x * inputs['mask']
+                    else:
+                        return x
+
+                outputs = net(inputs)
+
+                # calculate losses
+                losses = {
+                    k: v(mask(outputs[k]), mask(inputs[k])) if k
+                    in 'albedo normal'.split() else v(outputs[k], inputs[k])
+                    for k, v in criterion.items()
+                }
+
+                # backward and optimization
+                if is_train:
+                    optimizer.zero_grad()
+                    sum(losses.values()).backward()
+                    optimizer.step()
+
+                # generate fake results
+                fakes = net(inputs, fake_forward=True)
+
+                # tag dicts and return
+                fakes = {f'{k}_fake': v for k, v in fakes.items()}
+                losses = {f'{k}_loss': v for k, v in losses.items()}
+                inputs = {f'{k}_input': v for k, v in inputs.items()}
+                outputs = {f'{k}_output': v for k, v in outputs.items()}
 
             return inputs | outputs | losses | fakes
 
