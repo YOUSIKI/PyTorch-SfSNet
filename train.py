@@ -192,24 +192,19 @@ def main(args):
             # move inputs to device
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            # automatically apply mask on images
-            def apply_mask(d):
-                mask = inputs['mask']
+            # apply mask on images
+            def mask(x):
                 if args.apply_mask:
-                    return {
-                        k: v if v.dim() != 4 else v * mask
-                        for k, v in d.items()
-                    }
+                    return x * inputs['mask']
                 else:
-                    return d
+                    return x
 
-            inputs = apply_mask(inputs)
             outputs = net(inputs)
-            outputs = apply_mask(outputs)
 
             # calculate losses
             losses = {
-                k: v(outputs[k], inputs[k])
+                k: v(mask(outputs[k]), mask(inputs[k]))
+                if k in 'albedo normal'.split() else v(outputs[k], inputs[k])
                 for k, v in criterion.items()
             }
 
@@ -318,6 +313,16 @@ def main(args):
         iteration = '%06d' % engine.state.iteration
         dirname = os.path.join(args.samples_dir, 'valid', epoch, iteration)
         sampler(engine, dirname)
+
+    # run validation after each epoch
+    @train_engine.on(Events.EPOCH_COMPLETED)
+    def run_validation_after_each_epoch(engine):
+        valid_engine.run(valid_dl)
+
+    # adjust learning rate after each epoch
+    @train_engine.on(Events.EPOCH_COMPLETED)
+    def adjust_learning_rate_after_each_epoch(engine):
+        scheduler.step()
 
     # release GPU cache
     if args.cuda:

@@ -8,7 +8,7 @@ import argparse
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser('Convert Original Dataset to SfSDataset')
     parser.add_argument('-m', '--mode', type=str)
     parser.add_argument('-s', '--src', type=str)
     parser.add_argument('-d', '--dst', type=str)

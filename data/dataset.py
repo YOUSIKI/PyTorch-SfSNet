@@ -23,10 +23,25 @@ def png_loader(filename, size=128, default=None):
         return default
 
 
-def txt_loader(filename):
-    data = np.loadtxt(filename)
-    data = FloatTensor(data)
-    return data
+def png_saver(filename, img):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    img = functional.to_pil_image(img)
+    img.save(filename)
+
+
+def txt_loader(filename, default=None):
+    if os.path.exists(filename):
+        data = np.loadtxt(filename)
+        data = FloatTensor(data)
+        return data
+    else:
+        return default
+
+
+def txt_saver(filename, data):
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    data = data.detach().cpu().numpy()
+    np.savetxt(filename, data)
 
 
 class FolderDataset(Dataset):
@@ -35,7 +50,9 @@ class FolderDataset(Dataset):
         self.root = root
         self.split = split
         samples = len(glob.glob(os.path.join(self.root, 'face', '*.png')))
-        if self.split == 'train':
+        if self.split == 'all':
+            self.samples = range(samples)
+        elif self.split == 'train':
             self.samples = range(0, int(samples * 0.8))
         else:
             self.samples = range(int(samples * 0.8), samples)
@@ -49,9 +66,12 @@ class FolderDataset(Dataset):
         face = png_loader(template % ('face', index, 'png'))
         mask = png_loader(template % ('mask', index, 'png'),
                           default=torch.ones_like(face))
-        light = txt_loader(template % ('light', index, 'txt'))
-        albedo = png_loader(template % ('albedo', index, 'png'))
-        normal = png_loader(template % ('normal', index, 'png'))
+        light = txt_loader(template % ('light', index, 'txt'),
+                           default=torch.zeros((27, ), dtype=torch.float))
+        albedo = png_loader(template % ('albedo', index, 'png'),
+                            default=torch.zeros_like(face))
+        normal = png_loader(template % ('normal', index, 'png'),
+                            default=torch.zeros_like(face))
         return {
             'face': face,
             'mask': mask,
@@ -59,6 +79,16 @@ class FolderDataset(Dataset):
             'albedo': albedo,
             'normal': normal,
         }
+
+    def __setitem__(self, index, value):
+        index = self.samples[index]
+        template = os.path.join(self.root, '%s', '%08d.%s')
+        for name, item in value.items():
+            assert name != 'face'
+            if name == 'light':
+                txt_saver(template % (name, index, 'txt'), item)
+            else:
+                png_saver(template % (name, index, 'png'), item)
 
 
 class DatasetX(Dataset):
